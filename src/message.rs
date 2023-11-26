@@ -8,41 +8,37 @@ use std::io::{Read, Write};
 use std::net::UdpSocket;
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+/// List of Messages used between speednet server and client
 pub enum Message {
-    // Client starts by greeting the Server with
-    // an Hello message containing the client configuration
-    // on the TCP control connection
+    /// Client starts by greeting the Server with
+    /// an Hello message containing the client configuration
+    /// on the TCP control connection
     ClientHello(ArgsClient),
 
-    // Server replies back by greeting the client with
-    // an Hello message containing the Test ID
-    // on the TCP control connection.
+    /// Server replies back by greeting the client with
+    /// an Hello message containing the Test ID
+    /// on the TCP control connection.
     ServerHello(u32),
 
-    // Client initialize a new data stream with the server (TCP or UDP data stream).
-    // The first argument is the Test ID provided in ServerHello message.
-    // The second argument is the Stream ID.
-    //
-    // For UDP, if the client does not get a ServerInitStream reply, it may
-    // try to resend it again in order to handle packet loss.
-    ClientInitStream(u32, u32),
+    /// Client initialize a new data stream with the server (TCP or UDP data stream).
+    /// The first argument is the Test ID provided in ServerHello message.
+    /// The second argument is the Stream ID.
+    ///
+    /// For UDP, if the client does not get a ServerInitStream reply, it may
+    /// try to resend it again in order to handle packet loss.
+    ClientStreamHello(u32, u32),
 
-    // Server acknowledge than stream is correctly initialized
-    // on TCP or UDP data stream.
-    ServerInitStream,
+    /// Server acknowledge than stream is correctly initialized
+    /// on TCP or UDP data stream.
+    ServerStreamHello,
 
-    // Client ask Server to start the test when all streams are initialized
-    // on the TCP control connection.
+    /// Client ask Server to start the test when all streams are initialized
+    /// on the TCP control connection.
     ClientStartTest,
 
-    // Server send a test update to the client every second
-    // on the TCP control connection.
+    /// Server send a test update to the client every second
+    /// on the TCP control connection.
     ServerTestUpdate,
-
-    // TODO: LEGACY to be removed
-    ClientStartStream(u32),
-    ClientStartUDP(u32),
-    ServerStartUDP,
 }
 
 pub trait MessageIO {

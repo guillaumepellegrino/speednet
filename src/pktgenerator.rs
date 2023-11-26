@@ -8,8 +8,15 @@ use crate::args::ArgsClient;
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Update {
     pub elapsed: Duration,
-    pub pktcount_expected: u128,
-    pub pktcount: u128,
+    pub pktcount_expected: u64,
+    pub pktcount: u64,
+    pub bytes: u64,
+}
+
+impl Update {
+    pub fn get_througtput(&self) -> u64 {
+        8 * ((1000000 * self.bytes) / self.elapsed.as_micros() as u64)
+    }
 }
 
 pub fn tcp_send<F: FnMut(&Update)>(args: &ArgsClient, mut stream: TcpStream, mut update_cb: F) -> Result<Update> {
@@ -34,7 +41,7 @@ pub fn tcp_send<F: FnMut(&Update)>(args: &ArgsClient, mut stream: TcpStream, mut
     let mut prev_elapsed = Duration::from_secs(0);
     loop {
         update.elapsed = now.elapsed();
-        update.pktcount_expected = (total_packets as u128 * update.elapsed.as_nanos()) / duration.as_nanos();
+        update.pktcount_expected = ((total_packets as u128 * update.elapsed.as_nanos()) / duration.as_nanos()) as u64;
         if update.elapsed.as_secs() != prev_elapsed.as_secs() {
             update_cb(&update);
             prev_elapsed = update.elapsed;
@@ -53,6 +60,7 @@ pub fn tcp_send<F: FnMut(&Update)>(args: &ArgsClient, mut stream: TcpStream, mut
             break;
         }
         update.pktcount += 1;
+        update.bytes += len as u64;
     }
     Ok(update)
 }
@@ -78,6 +86,7 @@ pub fn tcp_recv<F: FnMut(&Update)>(args: &ArgsClient, mut stream: TcpStream, mut
             break;
         }
         update.pktcount += 1;
+        update.bytes += len as u64;
     }
 
     Ok(update)

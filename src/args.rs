@@ -13,30 +13,39 @@ pub struct ArgsClient {
     #[arg(short, long, default_value_t=4000)]
     pub port: u16,
 
+    /// Use UDP instead of TCP
     #[arg(short, long)]
     pub udp: bool,
 
+    /// Download instead of Upload
     #[arg(short='R', long)]
     pub revert: bool,
 
+    /// Set DSCP in packet IP Header
     #[arg(short, long)]
     pub dscp: Option<i32>,
 
+    /// Set packet MARK
     #[arg(short, long)]
     pub mark: Option<i32>,
 
+    /// Bind the specified IP Address
     #[arg(short='B', long)]
     pub bind: Option<String>,
 
+    /// Set a target bandwidth
     #[arg(short, long)]
     bandwidth: Option<u64>,
 
+    /// Set the number of open connections in parallel
     #[arg(short='P', long, default_value_t=1)]
-    pub parallel: i32,
+    pub parallel: u32,
 
-    #[arg(short, long, default_value_t=4096)]
+    /// Set the buffer len to use to send/recv packets
+    #[arg(short, long, default_value_t=100000)]
     len: u64,
 
+    /// The test duration time
     #[arg(short, long, default_value_t=10)]
     pub time: u64,
 
@@ -47,9 +56,10 @@ pub struct ArgsClient {
 
 #[derive(Parser, Debug, Clone, PartialEq, Default)]
 pub struct ArgsServer {
-    /// speednet server hostname
-    pub hostname: Option<String>,
+    /// Bind the specified IP Address
+    pub bind: Option<String>,
 
+    /// speednet server control port
     #[arg(short, long, default_value_t=4000)]
     pub port: u16,
 }

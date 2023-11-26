@@ -15,14 +15,16 @@ pub struct Client {
 struct Stream {
     args: ArgsClient,
     testid: u32,
+    streamid: u32,
     control_addr: SocketAddr,
 }
 
 impl Stream {
-    pub fn new(client: &Client, testid: u32) -> Self {
+    pub fn new(client: &Client, testid: u32, streamid: u32) -> Self {
         Self {
             args: client.args.clone(),
             testid,
+            streamid,
             control_addr: client.control_addr.clone(),
         }
     }
@@ -45,7 +47,7 @@ impl Stream {
         let mut s = UdpSocket::bind(bindaddr)
             .wrap_err("Failed to bind addr")?;
 
-        let start_udp = Message::ClientStartUDP(self.testid);
+        let start_udp = Message::ClientStreamHello(self.testid, self.streamid);
         s.sendmsg(&start_udp)
             .wrap_err("Client failed to start UDP")?;
 
@@ -57,7 +59,7 @@ impl Stream {
         let mut stream = TcpStream::connect(self.control_addr)
             .wrap_err("Failed to connect to server")?;
 
-        let start_stream = Message::ClientStartStream(self.testid);
+        let start_stream = Message::ClientStreamHello(self.testid, self.streamid);
         stream.sendmsg(&start_stream)
             .wrap_err("Client failed to start stream")?;
 
@@ -74,6 +76,7 @@ impl Stream {
     pub fn run_tcp_upload(&self, stream: TcpStream) -> Result<()> {
         println!("TCP Upload");
         let result = pktgenerator::tcp_send(&self.args, stream, |update| {
+            println!("Throughput: {}", update.get_througtput());
             println!("Elapsed: {}", update.elapsed.as_secs());
             println!("pktsent: {}", update.pktcount);
             println!("expected: {}", update.pktcount_expected);
@@ -88,6 +91,7 @@ impl Stream {
     pub fn run_tcp_download(&self, stream: TcpStream) -> Result<()> {
         println!("TCP Download");
         let result = pktgenerator::tcp_recv(&self.args, stream, |update| {
+            println!("Throughput: {}", update.get_througtput());
             println!("Elapsed: {}", update.elapsed.as_secs());
             println!("pktrecv: {}", update.pktcount);
             println!("");
@@ -159,8 +163,8 @@ impl Client {
         };
 
         let mut threads = vec!();
-        for _ in 0 .. self.args.parallel {
-            let stream = Stream::new(self, testid);
+        for streamid in 0 .. self.args.parallel {
+            let stream = Stream::new(self, testid, streamid);
             let thread = std::thread::spawn(move || {
                 if let Err(e) = stream.run() {
                     println!("Failed to run stream: {:?}", e);
