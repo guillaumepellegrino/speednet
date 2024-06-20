@@ -1,15 +1,19 @@
 use eyre::{eyre, Result, WrapErr};
 use std::net::{TcpStream, UdpSocket, SocketAddr, IpAddr};
+use std::sync::{Mutex};
+use std::time::{Duration, Instant};
 use crate::{
     args::ArgsClient,
-    message::{Message, MessageIO},
+    api::{Message, MessageIO},
     pktgenerator,
+    result::{StreamResult, ClientResult},
 };
 
-pub struct Client {
+pub struct Client<'a> {
     args: ArgsClient,
     control_addr: SocketAddr,
     control_stream: TcpStream,
+    update_cb: Option<Box<dyn FnMut(&ClientResult) + Send + 'a>>
 }
 
 struct Stream {
@@ -20,7 +24,7 @@ struct Stream {
 }
 
 impl Stream {
-    pub fn new(client: &Client, testid: u32, streamid: u32) -> Self {
+    fn new(client: &Client, testid: u32, streamid: u32) -> Self {
         Self {
             args: client.args.clone(),
             testid,
@@ -29,17 +33,17 @@ impl Stream {
         }
     }
 
-    pub fn run(&self) -> Result<()> {
+    fn run(&mut self, result: &Mutex<StreamResult>) -> Result<()> {
         if self.args.udp {
             self.run_udp()?;
         }
         else {
-            self.run_tcp()?;
+            self.run_tcp(result)?;
         }
         Ok(())
     }
 
-    pub fn run_udp(&self) -> Result<()> {
+    fn run_udp(&mut self) -> Result<StreamResult> {
         let bindaddr = match self.control_addr.is_ipv4() {
             true  => "0.0.0.0:0",
             false => "[::0]:0",
@@ -51,11 +55,10 @@ impl Stream {
         s.sendmsg(&start_udp)
             .wrap_err("Client failed to start UDP")?;
 
-
-        Ok(())
+        unreachable!();
     }
 
-    pub fn run_tcp(&self) -> Result<()> {
+    fn run_tcp(&mut self, result: &Mutex<StreamResult>) -> Result<()> {
         let mut stream = TcpStream::connect(self.control_addr)
             .wrap_err("Failed to connect to server")?;
 
@@ -64,47 +67,20 @@ impl Stream {
             .wrap_err("Client failed to start stream")?;
 
         if self.args.revert {
-            self.run_tcp_download(stream)?;
+            pktgenerator::tcp_recv(&self.args, stream, result);
         }
         else {
-            self.run_tcp_upload(stream)?;
+            pktgenerator::tcp_send(&self.args, stream, result);
         }
-
-        Ok(())
-    }
-
-    pub fn run_tcp_upload(&self, stream: TcpStream) -> Result<()> {
-        println!("TCP Upload");
-        let result = pktgenerator::tcp_send(&self.args, stream, |update| {
-            println!("Throughput: {}", update.get_througtput());
-            println!("Elapsed: {}", update.elapsed.as_secs());
-            println!("pktsent: {}", update.pktcount);
-            println!("expected: {}", update.pktcount_expected);
-            println!("");
-        })?;
-        println!("TCP Upload done");
-        println!("Elapsed: {}", result.elapsed.as_secs());
-        println!("pktsent: {}", result.pktcount);
-        Ok(())
-    }
-
-    pub fn run_tcp_download(&self, stream: TcpStream) -> Result<()> {
-        println!("TCP Download");
-        let result = pktgenerator::tcp_recv(&self.args, stream, |update| {
-            println!("Throughput: {}", update.get_througtput());
-            println!("Elapsed: {}", update.elapsed.as_secs());
-            println!("pktrecv: {}", update.pktcount);
-            println!("");
-        })?;
-        println!("TCP Download done");
-        println!("Elapsed: {}", result.elapsed.as_secs());
-        println!("Pkt Recv: {}", result.pktcount);
         Ok(())
     }
 }
 
-impl Client {
-    pub fn new(args: ArgsClient) -> Result<Self> {
+impl<'a> Client<'a> {
+    pub fn new(mut args: ArgsClient) -> Result<Self> {
+        args.prepare_config();
+        args.print_config();
+
         let ip_addr = args.hostname.parse::<IpAddr>()
             .wrap_err("Invalid hostname")?;
 
@@ -118,7 +94,18 @@ impl Client {
             args,
             control_addr: addr,
             control_stream: stream,
+            update_cb: None,
         })
+    }
+
+    pub fn on_update<F>(&mut self, update_cb: F)
+        where F: FnMut(&ClientResult) + Send + 'a
+    {
+        self.update_cb = Some(Box::new(update_cb));
+    }
+
+    pub fn args(&self) -> &ArgsClient {
+        &self.args
     }
 
     /// 1. TCP Upload
@@ -133,7 +120,6 @@ impl Client {
     /// - [ctl] Server acknowledge
     /// - [data] Client open Nx data TCP streams
     /// - [data] Server send on data TCP stream
-    /// - [ctl] Server report stats every second and when conn is closed
     ///
     /// 3. UDP Upload
     /// - [ctl] Client send config to Server
@@ -147,9 +133,8 @@ impl Client {
     /// - [ctl] Server acknowledge
     /// - [data] Client open Nx data UDP streams
     /// - [data] Server send on data UDP stream
-    /// - [ctl] Server report stats every second and when conn is closed
     ///
-    pub fn run(&mut self) -> Result<()> {
+    pub fn run(&mut self) -> Result<ClientResult> {
         let client_hello = Message::ClientHello(self.args.clone());
         self.control_stream.sendmsg(&client_hello)
             .wrap_err("Failed to send client hello to server")?;
@@ -162,23 +147,58 @@ impl Client {
             _ => {return Err(eyre!("Expected ServerHello message iso {:?}", msg));},
         };
 
-        let mut threads = vec!();
-        for streamid in 0 .. self.args.parallel {
-            let stream = Stream::new(self, testid, streamid);
-            let thread = std::thread::spawn(move || {
-                if let Err(e) = stream.run() {
-                    println!("Failed to run stream: {:?}", e);
-                }
-            });
-            threads.push(thread);
+
+        let mut client_result = ClientResult::default();
+        let mut stream_results = vec!();
+        for _streamid in 0 .. self.args.parallel {
+            let stream_result = std::sync::Mutex::new(StreamResult::default());
+            stream_results.push(stream_result);
         }
 
-        for thread in threads {
-            if let Err(e) = thread.join() {
-                println!("Thead returned an error: {:?}", e);
+        std::thread::scope(|scope| {
+            // start clients threads
+            let mut threads = vec!();
+            let stream_results = &stream_results;
+            for streamid in 0 .. self.args.parallel {
+                let mut stream = Stream::new(self, testid, streamid);
+                let thread = scope.spawn(move || {
+                    stream.run(&stream_results[streamid as usize])
+                });
+                threads.push(thread);
             }
+
+            // Collect stream results every second until time is elapsed
+            let total_packets = self.args.get_totalpackets();
+            let duration = Duration::from_secs(self.args.time);
+            let now = Instant::now();
+            loop {
+                std::thread::sleep(Duration::from_secs(1));
+                let elapsed = now.elapsed();
+                if elapsed.as_secs() >= self.args.time {
+                    break;
+                }
+                client_result.reset();
+                for streamid in 0 .. self.args.parallel {
+                    let mut stream_result = stream_results[streamid as usize]
+                        .lock().unwrap().clone();
+                    stream_result.elapsed = elapsed;
+                    stream_result.pktcount_expected = ((total_packets as u128 * elapsed.as_nanos()) / duration.as_nanos()) as u64;
+                    client_result.add_stream_result(&stream_result);
+                }
+                if let Some(update_cb) = &mut self.update_cb {
+                    update_cb(&client_result);
+                }
+            }
+        });
+
+        // Build final result
+        client_result.reset();
+        for streamid in 0 .. self.args.parallel {
+            let stream_result = stream_results[streamid as usize]
+                .lock().unwrap().clone();
+            client_result.add_stream_result(&stream_result);
         }
 
-        Ok(())
+        Ok(client_result)
     }
 }

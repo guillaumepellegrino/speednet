@@ -34,16 +34,16 @@ pub struct ArgsClient {
     pub bind: Option<String>,
 
     /// Set a target bandwidth
-    #[arg(short, long)]
-    bandwidth: Option<u64>,
+    #[arg(short, long, default_value_t=0)]
+    pub bandwidth: u64,
 
     /// Set the number of open connections in parallel
     #[arg(short='P', long, default_value_t=1)]
     pub parallel: u32,
 
     /// Set the buffer len to use to send/recv packets
-    #[arg(short, long, default_value_t=100000)]
-    len: u64,
+    #[arg(short, long, default_value_t=0)]
+    pub len: u64,
 
     /// The test duration time
     #[arg(short, long, default_value_t=10)]
@@ -82,25 +82,56 @@ pub struct Args {
 
 
 impl ArgsClient {
+    /** Create new struct Arguments for speednet client */
+    pub fn new(hostname: &str) -> Self {
+        let args = [String::from("speednet"), String::from(hostname)];
+        ArgsClient::parse_from(args)
+    }
+
     /** Return the test bandwidth */
     pub fn get_bandwidth(&self) -> u64 {
-        self.bandwidth.unwrap_or(0)
+        self.bandwidth
     }
 
     /** Return the socket buffer len */
     pub fn get_bufferlen(&self) -> u64 {
-        let len = std::cmp::min(self.len, 10*1000*1000);
-        std::cmp::max(len, 10)
+        self.len
     }
 
     /** Return the number of total packets to send for this test */
     pub fn get_totalpackets(&self) -> u64 {
-        let bandwidth = match self.bandwidth {
-            Some(bandwidth) => bandwidth,
-            None => {return 0;},
-        };
         let bufferlen = self.get_bufferlen();
+        self.time * self.bandwidth / (8 * bufferlen)
+    }
 
-        self.time * bandwidth / (8 * bufferlen)
+    pub fn prepare_config(&mut self) {
+        if self.bandwidth == 0 {
+            self.bandwidth = match self.udp {
+                true => 1000000,
+                false => 10000000000,
+            };
+        }
+        self.bandwidth /= self.parallel as u64;
+        if self.len == 0 {
+            self.len = match self.udp {
+                true => 1472,
+                false => std::cmp::min(1000000, self.bandwidth/80),
+            };        
+        }
+    }
+
+    pub fn print_config(&self) {
+        let protocol = if self.udp {"UDP"} else {"TCP"};
+        let direction = if self.revert {"download"} else {"upload"};
+        eprintln!("Starting {} client using {}x {} streams at {}kbps with buffer len of {} bytes",
+            protocol, self.parallel, direction, self.bandwidth/1000, self.len);
+    }
+}
+
+impl ArgsServer {
+    /** Create new struct Arguments for speednet server */
+    pub fn new() -> Self {
+        let args = [String::from("speednet")];
+        ArgsServer::parse_from(args)
     }
 }

@@ -1,21 +1,30 @@
 use eyre::{Result, WrapErr};
 use clap::Parser;
-use args::{Args, ArgsClient, ArgsServer, Subcommand};
-mod args;
-mod client;
-mod message;
-mod server;
-mod pktgenerator;
+
+use speednet_core::{
+    Args,
+    ArgsClient,
+    ArgsServer,
+    Client,
+    Server,
+    Subcommand,
+};
 
 fn speednet_client(args: ArgsClient) -> Result<()> {
-    let mut client = client::Client::new(args)?;
-    client.run()
+    let mut client = Client::new(args)?;
+    client.on_update(|update| {
+        update.pretty_print();
+    });
+    let result = client.run()
         .wrap_err("Failed to run speednet client")?;
+    print!("[Total]");
+    result.pretty_print();
+    
     Ok(())
 }
 
 fn speednet_server(args: ArgsServer) -> Result<()> {
-    let server = server::Server::new(args)?;
+    let mut server = Server::new(args)?;
     server.run()
         .wrap_err("Failed to run speednet server")?;
     Ok(())

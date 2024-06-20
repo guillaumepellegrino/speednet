@@ -6,28 +6,34 @@ use std::sync::{
 };
 use std::collections::HashMap;
 use crate::{
-    message::{Message, MessageIO},
+    api::{Message, MessageIO},
     args::{ArgsClient, ArgsServer},
     pktgenerator,
+    result::StreamResult,
 };
 
-#[derive(Default, Clone)]
 pub struct Server {
-    inner: Arc<RwLock<ServerInner>>,
-    args: ArgsServer,
+    listener: TcpListener,
+    local_addr: SocketAddr,
+    inner: ServerInner,
+}
+
+#[derive(Clone)]
+pub struct ServerInner {
+    shared: Arc<RwLock<SharedCtx>>,
 }
 
 #[derive(Default)]
-struct ServerInner {
+struct SharedCtx {
     next_testid: u32,
-    speedtests: HashMap<u32, Speedtest>,
+    speedtests: HashMap<u32, Client>,
 }
 
-struct Speedtest {
+struct Client {
     config: ArgsClient,
 }
 
-impl Speedtest {
+impl Client {
     fn new(config: ArgsClient) -> Self {
         Self {
             config,
@@ -36,26 +42,31 @@ impl Speedtest {
 }
 
 impl Server {
+    /// Intialize a new Speednet server according the provided configuration
     pub fn new(args: ArgsServer) -> Result<Self> {
-        Ok(Self {
-            inner: Arc::default(),
-            args,
-        })
-    }
-
-    pub fn run(&self) -> Result<()> {
-        let ip_addr = match &self.args.bind {
+        let ip_addr = match &args.bind {
             Some(hostname) => hostname.parse::<IpAddr>().wrap_err("Invalid hostname")?,
             None => IpAddr::V6(Ipv6Addr::UNSPECIFIED),
         };
-        let listen_addr = SocketAddr::new(ip_addr, self.args.port);
-
-        //let (tx, rx) = std::sync::mpsc::channel();
-
-        println!("speednet server listening on {:?}", listen_addr);
+        let listen_addr = SocketAddr::new(ip_addr, args.port);
         let listener = TcpListener::bind(listen_addr)?;
-        for stream in listener.incoming() {
-            let me = self.clone();
+        let local_addr = listener.local_addr()?;
+        println!("speednet server listening on {:?}", local_addr);
+
+        Ok(Self {
+            listener,
+            local_addr,
+            inner: ServerInner::new()?
+        })
+    }
+
+    /// Run the Speednet server forever
+    ///
+    /// The speednet server is waiting for new speednet client tcp control connections.
+    /// Multiple speednet clients can connect at the same time.
+    pub fn run(&mut self) -> Result<()> {
+        for stream in self.listener.incoming() {
+            let me = self.inner.clone();
             let stream = match stream {
                 Ok(stream) => stream,
                 Err(e) => {
@@ -71,6 +82,24 @@ impl Server {
         }
 
         Ok(())
+
+    }
+
+    /// Return the local tcp socket address on which the
+    /// server is listening.
+    ///
+    /// Useful for automated tests when starting server
+    /// on a random port (= port 0).
+    pub fn get_local_addr(&self) -> &SocketAddr {
+        &self.local_addr
+    }
+}
+
+impl ServerInner {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            shared: Arc::default(),
+        })
     }
 
     fn server_handle_new_client(&self, mut stream: TcpStream) -> Result<()> {
@@ -84,38 +113,10 @@ impl Server {
         }
     }
 
-    pub fn server_handle_tcp_download(&self, stream: TcpStream, config: ArgsClient) -> Result<()> {
-        println!("Handle TCP Download");
-        let result = pktgenerator::tcp_send(&config, stream, |update| {
-            println!("Elapsed: {}", update.elapsed.as_secs());
-            println!("pktsent: {}", update.pktcount);
-            println!("expected: {}", update.pktcount_expected);
-            println!("");
-        })?;
-        println!("Handle TCP Download done");
-        println!("Elapsed: {}", result.elapsed.as_secs());
-        println!("Pkt Sent: {}", result.pktcount);
-        Ok(())
-    }
-
-    fn server_handle_tcp_upload(&self, stream: TcpStream, config: ArgsClient) -> Result<()> {
-        println!("Handle TCP Upload");
-        let result = pktgenerator::tcp_recv(&config, stream, |update| {
-            println!("Elapsed: {}", update.elapsed.as_secs());
-            println!("pktrecv: {}", update.pktcount);
-            println!("");
-        })?;
-
-        println!("Handle TCP Upload done");
-        println!("Elapsed: {}", result.elapsed.as_secs());
-        println!("Pkt Recv: {}", result.pktcount);
-        Ok(())
-    }
-
     fn server_handle_client_start_stream(&self, stream: TcpStream, testid: u32) -> Result<()> {
         println!("Test id: {}", testid);
 
-        let mut server = self.inner.write().unwrap();
+        let mut server = self.shared.write().unwrap();
         let speedtest = match server.speedtests.get_mut(&testid) {
             Some(speedtest) => speedtest,
             None => {
@@ -126,10 +127,13 @@ impl Server {
         let config = speedtest.config.clone();
         drop(server);
 
-        match config.revert {
-            true => self.server_handle_tcp_download(stream, config)?,
-            false => self.server_handle_tcp_upload(stream, config)?,
-        };
+        let stream_result = std::sync::Mutex::new(StreamResult::default());
+        if config.revert {
+            pktgenerator::tcp_send(&config, stream, &stream_result);
+        }
+        else {
+            pktgenerator::tcp_recv(&config, stream, &stream_result);
+        }
 
         Ok(())
     }
@@ -138,9 +142,9 @@ impl Server {
         println!("Client config: {:?}", config);
 
         // Create a new speedtest instance
-        let mut server = self.inner.write().unwrap();
+        let mut server = self.shared.write().unwrap();
         let testid = server.next_testid;
-        let speedtest = Speedtest::new(config);
+        let speedtest = Client::new(config);
         server.speedtests.insert(testid, speedtest);
         server.next_testid = testid + 1;
         drop(server);
