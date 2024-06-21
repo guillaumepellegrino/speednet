@@ -83,7 +83,6 @@ fn test_tcp4_ul4_1mbps() {
     assert!(result.total().throughput_is(10000000, 2));
 }
 
-/*
 #[test]
 fn test_tcp4_ul16_1mbps() {
     let result = run1client(IPVersion::V4, |args| {
@@ -91,9 +90,8 @@ fn test_tcp4_ul16_1mbps() {
         args.bandwidth = 10000000;
         args.parallel = 16;
     });
-    assert!(result.total().throughput_is(10000000, 2));
+    assert!(result.total().throughput_is(10000000, 4));
 }
-*/
 
 #[test]
 fn test_tcp6_ul1_1mbps() {

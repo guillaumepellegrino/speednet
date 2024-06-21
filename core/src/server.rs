@@ -127,7 +127,7 @@ impl ServerInner {
     }
 
     fn server_handle_client_start_stream(&self, stream: TcpStream, testid: u32, streamid: u32) -> Result<()> {
-        println!("Test id: {}", testid);
+        println!("Starting Test id: {}, Stream id: {}", testid, streamid);
 
         let mut server = self.shared.write().unwrap();
         let client = server.clients.get_mut(&testid)
@@ -175,6 +175,11 @@ impl ServerInner {
             return Err(eyre!("Receive unexpected message: {:?}", msg));
         }
 
+        if config.revert {
+            // no needs to collect stats in case of download
+            return Ok(());
+        }
+
         // Collect stream results every second until time is elapsed
         let total_bytes_expected = config.get_total_bytes_expected();
         let duration = Duration::from_secs(config.time);
@@ -194,6 +199,7 @@ impl ServerInner {
         // Send final result
         testdone_barrier.wait();
         let client_result = ClientResult::collect(&stream_results);
+
         stream.sendmsg(&Message::ServerTestUpdate(client_result))
             .wrap_err("Failed to send server test update")?;
 

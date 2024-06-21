@@ -84,17 +84,18 @@ pub fn tcp_recv(args: &ArgsClient, mut stream: TcpStream, update: &Mutex<StreamR
             break;
         }
 
+        let elapsed = now.elapsed();
         pktcount += 1;
         bytes += len as u64;
-        let elapsed = now.elapsed();
 
         let mut update = update.lock().unwrap();
         update.pktcount = pktcount;
         update.bytes = bytes;
+        update.elapsed = elapsed;
+        update.bytes_expected = total_bytes_expected;        
+
         if elapsed.as_secs() >= args.time  || elapsed.as_secs() >= args.time + 1 {
             if bytes >= total_bytes_expected {
-                update.elapsed = elapsed;
-                update.bytes_expected = total_bytes_expected;        
                 update.testdone = true;
                 break;
             }

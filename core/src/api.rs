@@ -76,26 +76,43 @@ impl MessageIO for TcpStream {
     // The message is received in JSON formated and is delimited by a NULL character.
     fn recvmsg(&mut self) -> Result<Message> {
         let mut buff = vec!(0; 4096);
+        let mut i = 0;
+        let maxsize = 200000;
+        let eof;
 
         // Find the message size
-        let readlen = self.peek(&mut buff)
-            .wrap_err("Failed to peek message")?;
-        if readlen == 0 {
-            return Err(eyre!("Connection closed by server"));
+        loop {
+            let chunk = &mut buff[i..];
+            let readlen = self.peek(chunk)
+                .wrap_err("Failed to peek message")?;
+            if readlen == 0 {
+                return Err(eyre!("Connection closed by server"));
+            }
+            //println!("recvmsg() i: {}, readlen: {}", i, readlen);
+            if let Some(nullidx) = chunk.iter().position(|x| *x == 0) {
+                eof = i + nullidx;
+                break;
+            }
+            self.read_exact(&mut buff[i..i+readlen])
+                .wrap_err("Failed to read message")?;
+            i += readlen;
+            if i + 2048 >= buff.len() {
+                buff.resize(buff.len() + 4096, 0);
+                //println!("grow buff to {}", buff.len());
+                if i > maxsize {
+                    return Err(eyre!("Recv message size is too long ({})", i));
+                }
+            } 
         }
-        // FIXME: this error may happen if we read only a chunk of the message.
-        //        we should retry to read until max buffer length is reach.
-        let eof = buff.iter().position(|x| *x == 0)
-            .ok_or(eyre!("Recv message has no end"))?;
 
-        // Read the exact message size
-        buff.truncate(eof + 1);
-        self.read_exact(&mut buff)
+        // Read the last message chunk into buffer
+        self.read_exact(&mut buff[i..eof+1])
             .wrap_err("Failed to read message")?;
-        buff.pop();
-
+        
+        //println!("recvmsg() buff[{}..{}]={:?}", 0, eof, &buff[0..eof+1]);
+        
         // Parse the message
-        let string = std::str::from_utf8(&buff)
+        let string = std::str::from_utf8(&buff[0..eof])
             .wrap_err("Received message is not UTF-8")?;
         let msg = serde_json::from_str(string)
             .wrap_err("Failed to parse message")?;

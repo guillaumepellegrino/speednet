@@ -79,11 +79,11 @@ impl ClientResult {
 
         let mut i = 0;
         for stream in &self.streams {
-            println!("  - Stream {}: {} kbps, Pkt: {}, Expected: {}",
+            println!("  - Stream {}: {} kbps, Rx: {}kB, Expected: {}kB",
                 i,
                 stream.get_througtput()/1000,
-                stream.pktcount,
-                stream.bytes_expected);
+                stream.bytes/1000,
+                stream.bytes_expected/1000);
             i += 1;
         }
     }
