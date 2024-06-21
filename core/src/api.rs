@@ -83,6 +83,8 @@ impl MessageIO for TcpStream {
         if readlen == 0 {
             return Err(eyre!("Connection closed by server"));
         }
+        // FIXME: this error may happen if we read only a chunk of the message.
+        //        we should retry to read until max buffer length is reach.
         let eof = buff.iter().position(|x| *x == 0)
             .ok_or(eyre!("Recv message has no end"))?;
 

@@ -6,9 +6,9 @@ use std::sync::Mutex;
 #[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]
 pub struct StreamResult {
     pub elapsed: Duration,
-    pub pktcount_expected: u64,
     pub pktcount: u64,
     pub bytes: u64,
+    pub bytes_expected: u64,
     pub testdone: bool,
 }
 
@@ -38,7 +38,7 @@ impl StreamResult {
     }
     /*
     pub fn throughput_is_nominal(&self, percent_error: u64) -> bool {
-        let expected = pktcount_expected / self.duration_expected;
+        let expected = bytes_expected / self.duration_expected;
         self.throughput_is(expected, percent_error)
     }
     */
@@ -56,19 +56,19 @@ impl ClientResult {
         if self.total.elapsed < result.elapsed {
             self.total.elapsed = result.elapsed;
         }
-        self.total.pktcount_expected += result.pktcount_expected;
         self.total.pktcount += result.pktcount;
         self.total.bytes += result.bytes;
+        self.total.bytes_expected += result.bytes_expected;
         self.total.testdone |= result.testdone;
         self.streams.push(result.clone());
     }
 
     pub fn print_summary(&self) {
-        println!("[{}] Sum: {} kbps, Pkt: {}, Expected: {}",
+        println!("[{}] Sum: {} kbps, Rx: {}kB, Expected: {}kB",
             self.total.elapsed.as_secs(),
             self.total.get_througtput()/1000,
-            self.total.pktcount,
-            self.total.pktcount_expected);
+            self.total.bytes/1000,
+            self.total.bytes_expected/1000);
     }
 
     pub fn pretty_print(&self) {
@@ -83,7 +83,7 @@ impl ClientResult {
                 i,
                 stream.get_througtput()/1000,
                 stream.pktcount,
-                stream.pktcount_expected);
+                stream.bytes_expected);
             i += 1;
         }
     }
@@ -92,12 +92,12 @@ impl ClientResult {
         &self.total
     }
 
-    pub fn collect_and_override(streams: &Vec<Mutex<StreamResult>>, elapsed: Duration, pktcount_expected: u64) -> Self {
+    pub fn collect_and_override(streams: &Vec<Mutex<StreamResult>>, elapsed: Duration, bytes_expected: u64) -> Self {
         let mut client = ClientResult::default();
         for stream in streams {
             let mut stream = stream.lock().unwrap().clone();
             stream.elapsed = elapsed;
-            stream.pktcount_expected = pktcount_expected as u64;
+            stream.bytes_expected = bytes_expected as u64;
             client.add_stream_result(&stream);
         }
         client

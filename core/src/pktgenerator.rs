@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use crate::args::ArgsClient;
 use crate::result::StreamResult;
 
-pub fn tcp_send(args: &ArgsClient, mut stream: TcpStream, update: &Mutex<StreamResult>) {
+pub fn tcp_send(args: &ArgsClient, mut stream: TcpStream) {
     let bufferlen = args.get_bufferlen();
     let mut buffer = Vec::with_capacity(bufferlen as usize);
     for i in 1..bufferlen {
@@ -14,27 +14,28 @@ pub fn tcp_send(args: &ArgsClient, mut stream: TcpStream, update: &Mutex<StreamR
         buffer.push(value as u8);
     }
     let duration = Duration::from_secs(args.time);
-    let total_packets = args.get_totalpackets();
-    let mut pktcount = 0;
+    let total_bytes_expected = args.get_total_bytes_expected();
     let mut bytes = 0;
     let now = Instant::now();
-    let mut pktcount_expected = 0;
+    let mut bytes_expected = 0;
     let mut elapsed;
 
     loop {
-        if pktcount >= pktcount_expected {
+        if bytes >= bytes_expected {
             sleep(Duration::from_millis(2));
             elapsed = now.elapsed();
-            pktcount_expected = if elapsed.as_secs() >= args.time {
-                total_packets
+            bytes_expected = if elapsed.as_secs() >= args.time {
+                total_bytes_expected
             }
             else {
-                ((total_packets as u128 * (elapsed.as_nanos())) / duration.as_nanos()) as u64
+                ((total_bytes_expected as u128 * (elapsed.as_nanos())) / duration.as_nanos()) as u64
             };    
             continue;
         }
 
-        let len = match stream.write(&mut buffer) {
+        let len = std::cmp::min(bytes_expected - bytes, bufferlen) as usize;
+        let buffer = &mut buffer[0..len];
+        let len = match stream.write(buffer) {
             Ok(x) => x,
             Err(_) => break,
         };
@@ -42,29 +43,20 @@ pub fn tcp_send(args: &ArgsClient, mut stream: TcpStream, update: &Mutex<StreamR
             println!("Connection to server closed");
             break;
         }
-        pktcount += 1;
         bytes += len as u64;
         elapsed = now.elapsed();
-        pktcount_expected = if elapsed.as_secs() >= args.time {
-            total_packets
+        bytes_expected = if elapsed.as_secs() >= args.time {
+            total_bytes_expected
         }
         else {
-            ((total_packets as u128 * (elapsed.as_nanos())) / duration.as_nanos()) as u64
+            ((total_bytes_expected as u128 * (elapsed.as_nanos())) / duration.as_nanos()) as u64
         };
 
-        let mut update = update.lock().unwrap();
-        update.pktcount = pktcount;
-        update.pktcount_expected = pktcount_expected;
-        update.bytes = bytes;
-        update.elapsed = elapsed;
-
         if elapsed.as_secs() >= args.time {
-            if pktcount >= pktcount_expected {
-                update.testdone = true;
+            if bytes >= bytes_expected {
                 break;
             }
             if elapsed.as_secs() >= args.time + 1 {
-                update.testdone = true;
                 break;
             }
         }
@@ -74,7 +66,7 @@ pub fn tcp_send(args: &ArgsClient, mut stream: TcpStream, update: &Mutex<StreamR
 pub fn tcp_recv(args: &ArgsClient, mut stream: TcpStream, update: &Mutex<StreamResult>) {
     let bufferlen = args.get_bufferlen();
     let mut buffer = vec!(0; bufferlen as usize);
-    let total_packets = args.get_totalpackets();
+    let total_bytes_expected = args.get_total_bytes_expected();
     let mut pktcount = 0;
     let mut bytes = 0;
     let now = Instant::now();
@@ -99,14 +91,10 @@ pub fn tcp_recv(args: &ArgsClient, mut stream: TcpStream, update: &Mutex<StreamR
         let mut update = update.lock().unwrap();
         update.pktcount = pktcount;
         update.bytes = bytes;
-        update.elapsed = now.elapsed();
-        update.pktcount_expected = total_packets;
-        if elapsed.as_secs() >= args.time {
-            if pktcount >= total_packets {
-                update.testdone = true;
-                break;
-            }
-            if elapsed.as_secs() >= args.time + 1 {
+        if elapsed.as_secs() >= args.time  || elapsed.as_secs() >= args.time + 1 {
+            if bytes >= total_bytes_expected {
+                update.elapsed = elapsed;
+                update.bytes_expected = total_bytes_expected;        
                 update.testdone = true;
                 break;
             }

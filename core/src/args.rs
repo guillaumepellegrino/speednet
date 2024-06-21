@@ -104,6 +104,11 @@ impl ArgsClient {
         self.time * self.bandwidth / (8 * bufferlen)
     }
 
+    /** Return the number of total bytes to send for this test */
+    pub fn get_total_bytes_expected(&self) -> u64 {
+        self.time * self.bandwidth / 8
+    }
+
     pub fn prepare_config(&mut self) {
         if self.bandwidth == 0 {
             self.bandwidth = match self.udp {

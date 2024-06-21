@@ -73,7 +73,7 @@ impl Stream {
             pktgenerator::tcp_recv(&self.args, stream, result);
         }
         else {
-            pktgenerator::tcp_send(&self.args, stream, result);
+            pktgenerator::tcp_send(&self.args, stream);
         }
         Ok(())
     }
@@ -179,7 +179,7 @@ impl<'a> Client<'a> {
     /// Results are retrieved from local threads
     fn run_download(&mut self) -> Result<ClientResult> {
         // Collect stream results every second until time is elapsed
-        let total_packets = self.args.get_totalpackets();
+        let total_bytes_expected = self.args.get_total_bytes_expected();
         let duration = Duration::from_secs(self.args.time);
         let now = Instant::now();
         loop {
@@ -188,8 +188,8 @@ impl<'a> Client<'a> {
             if elapsed.as_secs() >= self.args.time {
                 break;
             }
-            let pktcount_expected = ((total_packets as u128 * elapsed.as_nanos()) / duration.as_nanos()) as u64;
-            let client_result = ClientResult::collect_and_override(&self.stream_results, elapsed, pktcount_expected);
+            let bytes_expected = ((total_bytes_expected as u128 * (elapsed.as_nanos())) / duration.as_nanos()) as u64;
+            let client_result = ClientResult::collect_and_override(&self.stream_results, elapsed, bytes_expected);
             if let Some(update_cb) = &mut self.update_cb {
                 update_cb(&client_result);
             }

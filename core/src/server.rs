@@ -139,7 +139,7 @@ impl ServerInner {
 
         let stream_result = stream_results.get(streamid as usize).expect("Unknown streamid");
         if config.revert {
-            pktgenerator::tcp_send(&config, stream, &stream_result);
+            pktgenerator::tcp_send(&config, stream);
         }
         else {
             pktgenerator::tcp_recv(&config, stream, &stream_result);
@@ -176,7 +176,7 @@ impl ServerInner {
         }
 
         // Collect stream results every second until time is elapsed
-        let total_packets = config.get_totalpackets();
+        let total_bytes_expected = config.get_total_bytes_expected();
         let duration = Duration::from_secs(config.time);
         let now = Instant::now();
         loop {
@@ -185,8 +185,8 @@ impl ServerInner {
             if elapsed.as_secs() >= config.time {
                 break;
             }
-            let pktcount_expected = ((total_packets as u128 * elapsed.as_nanos()) / duration.as_nanos()) as u64;
-            let client_result = ClientResult::collect_and_override(&stream_results, elapsed, pktcount_expected);
+            let bytes_expected = ((total_bytes_expected as u128 * (elapsed.as_nanos())) / duration.as_nanos()) as u64;
+            let client_result = ClientResult::collect_and_override(&stream_results, elapsed, bytes_expected);
             stream.sendmsg(&Message::ServerTestUpdate(client_result))
                 .wrap_err("Failed to send server test update")?;
         }
