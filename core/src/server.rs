@@ -2,14 +2,17 @@ use eyre::{eyre, Result, WrapErr};
 use std::net::{TcpListener, TcpStream, SocketAddr, IpAddr, Ipv6Addr};
 use std::sync::{
     Arc,
+    Barrier,
     RwLock,
+    Mutex,
 };
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use crate::{
     api::{Message, MessageIO},
     args::{ArgsClient, ArgsServer},
     pktgenerator,
-    result::StreamResult,
+    result::{ClientResult, StreamResult},
 };
 
 pub struct Server {
@@ -26,17 +29,27 @@ pub struct ServerInner {
 #[derive(Default)]
 struct SharedCtx {
     next_testid: u32,
-    speedtests: HashMap<u32, Client>,
+    clients: HashMap<u32, Client>,
 }
 
 struct Client {
+    testdone_barrier: Arc<Barrier>,
     config: ArgsClient,
+    stream_results: Arc<Vec<Mutex<StreamResult>>>,
 }
 
 impl Client {
     fn new(config: ArgsClient) -> Self {
+        let mut stream_results = vec!();
+        for _streamid in 0 .. config.parallel {
+            let stream_result = std::sync::Mutex::new(StreamResult::default());
+            stream_results.push(stream_result);
+        }
+
         Self {
+            testdone_barrier: Arc::new(Barrier::new(config.parallel as usize + 1)),
             config,
+            stream_results: Arc::new(stream_results),
         }
     }
 }
@@ -108,51 +121,50 @@ impl ServerInner {
 
         match msg {
             Message::ClientHello(config) => self.server_handle_client_hello(stream, config),
-            Message::ClientStreamHello(testid, _streamid) => self.server_handle_client_start_stream(stream, testid),
+            Message::ClientStreamHello(testid, streamid) => self.server_handle_client_start_stream(stream, testid, streamid),
             _ => Err(eyre!("Received an unexpected message: {:?}", msg)),
         }
     }
 
-    fn server_handle_client_start_stream(&self, stream: TcpStream, testid: u32) -> Result<()> {
+    fn server_handle_client_start_stream(&self, stream: TcpStream, testid: u32, streamid: u32) -> Result<()> {
         println!("Test id: {}", testid);
 
         let mut server = self.shared.write().unwrap();
-        let speedtest = match server.speedtests.get_mut(&testid) {
-            Some(speedtest) => speedtest,
-            None => {
-                return Err(eyre!("Unknown testid {}", testid));
-            },
-        };
-
-        let config = speedtest.config.clone();
+        let client = server.clients.get_mut(&testid)
+            .ok_or_else(|| eyre!("Unknown testid {}", testid))?;
+        let config = client.config.clone();
+        let stream_results = client.stream_results.clone();
+        let testdone_barrier = client.testdone_barrier.clone();
         drop(server);
 
-        let stream_result = std::sync::Mutex::new(StreamResult::default());
+        let stream_result = stream_results.get(streamid as usize).expect("Unknown streamid");
         if config.revert {
             pktgenerator::tcp_send(&config, stream, &stream_result);
         }
         else {
             pktgenerator::tcp_recv(&config, stream, &stream_result);
         }
-
+        testdone_barrier.wait();
         Ok(())
     }
 
     fn server_handle_client_hello(&self, mut stream: TcpStream, config: ArgsClient) -> Result<()> {
         println!("Client config: {:?}", config);
 
-        // Create a new speedtest instance
+        // Create a new client instance
         let mut server = self.shared.write().unwrap();
         let testid = server.next_testid;
-        let speedtest = Client::new(config);
-        server.speedtests.insert(testid, speedtest);
+        let client = Client::new(config);
+        let config = client.config.clone();
+        let testdone_barrier = client.testdone_barrier.clone();
+        let stream_results = client.stream_results.clone();
+        server.clients.insert(testid, client);
         server.next_testid = testid + 1;
         drop(server);
 
         // Reply with Server Hello
         stream.sendmsg(&Message::ServerHello(testid))
             .wrap_err("Failed to send server hello")?;
-
         println!("Server hello sent");
 
 
@@ -163,8 +175,29 @@ impl ServerInner {
             return Err(eyre!("Receive unexpected message: {:?}", msg));
         }
 
+        // Collect stream results every second until time is elapsed
+        let total_packets = config.get_totalpackets();
+        let duration = Duration::from_secs(config.time);
+        let now = Instant::now();
+        loop {
+            std::thread::sleep(Duration::from_secs(1));
+            let elapsed = now.elapsed();
+            if elapsed.as_secs() >= config.time {
+                break;
+            }
+            let pktcount_expected = ((total_packets as u128 * elapsed.as_nanos()) / duration.as_nanos()) as u64;
+            let client_result = ClientResult::collect_and_override(&stream_results, elapsed, pktcount_expected);
+            stream.sendmsg(&Message::ServerTestUpdate(client_result))
+                .wrap_err("Failed to send server test update")?;
+        }
+
+        // Send final result
+        testdone_barrier.wait();
+        let client_result = ClientResult::collect(&stream_results);
+        stream.sendmsg(&Message::ServerTestUpdate(client_result))
+            .wrap_err("Failed to send server test update")?;
+
         Ok(())
     }
-
 }
 

@@ -1,6 +1,6 @@
 use eyre::{eyre, Result, WrapErr};
 use std::net::{TcpStream, UdpSocket, SocketAddr, IpAddr};
-use std::sync::{Mutex};
+use std::sync::{Arc, Barrier, Mutex};
 use std::time::{Duration, Instant};
 use crate::{
     args::ArgsClient,
@@ -10,10 +10,13 @@ use crate::{
 };
 
 pub struct Client<'a> {
-    args: ArgsClient,
-    control_addr: SocketAddr,
-    control_stream: TcpStream,
-    update_cb: Option<Box<dyn FnMut(&ClientResult) + Send + 'a>>
+    args: ArgsClient, // client configuration passed by command-line arguments
+    control_addr: SocketAddr, // socket address used to talk with server
+    control_stream: TcpStream, // socket used to talk with server
+    run_barrier: Arc<Barrier>, // wait for all threads to be setup before running test
+    stream_results: Arc<Vec<Mutex<StreamResult>>>, // results updated by stream threads
+    stream_threads: Vec<std::thread::JoinHandle<Result<()>>>, // threads running a stream download or upload
+    update_cb: Option<Box<dyn FnMut(&ClientResult) + Send + 'a>> // called when an client result update is available
 }
 
 struct Stream {
@@ -90,12 +93,49 @@ impl<'a> Client<'a> {
         let stream = TcpStream::connect(addr)
             .wrap_err("Failed to connect to server")?;
 
-        Ok(Self {
+        let run_barrier = Arc::new(Barrier::new(args.parallel as usize + 1));
+        
+        let mut stream_results = vec!();
+        for _streamid in 0 .. args.parallel {
+            let stream_result = std::sync::Mutex::new(StreamResult::default());
+            stream_results.push(stream_result);
+        }
+
+        let mut me = Self {
             args,
             control_addr: addr,
             control_stream: stream,
+            run_barrier,
+            stream_results: Arc::new(stream_results),
+            stream_threads: vec!(),
             update_cb: None,
-        })
+        };
+        me.setup()
+            .wrap_err("Failed to setup client")?;
+
+        Ok(me)
+    }
+
+    fn setup(&mut self) -> Result<()> {
+        let client_hello = Message::ClientHello(self.args.clone());
+        let testid = match self.control_stream.sendrecvmsg(&client_hello) {
+            Ok(Message::ServerHello(testid)) => testid,
+            Ok(other) => {return Err(eyre!("Expected ServerHello message iso {:?}", other));}
+            Err(e) => {return Err(eyre!("Failed to communicate with server: {:?}", e));}
+        };
+
+        for streamid in 0 .. self.args.parallel {
+            let mut stream = Stream::new(self, testid, streamid);
+            let stream_results_clone = self.stream_results.clone();
+            let run_barrier = self.run_barrier.clone();
+            let thread = std::thread::spawn(move || {
+                let stream_result = stream_results_clone.get(streamid as usize).unwrap();
+                run_barrier.wait();
+                stream.run(stream_result)
+            });
+            self.stream_threads.push(thread);
+        }
+        Ok(())
     }
 
     pub fn on_update<F>(&mut self, update_cb: F)
@@ -134,71 +174,64 @@ impl<'a> Client<'a> {
     /// - [data] Client open Nx data UDP streams
     /// - [data] Server send on data UDP stream
     ///
-    pub fn run(&mut self) -> Result<ClientResult> {
-        let client_hello = Message::ClientHello(self.args.clone());
-        self.control_stream.sendmsg(&client_hello)
-            .wrap_err("Failed to send client hello to server")?;
+    
 
-        let msg = self.control_stream.recvmsg()
-            .wrap_err("Failed to read server hello message")?;
-
-        let testid = match msg {
-            Message::ServerHello(testid) => testid,
-            _ => {return Err(eyre!("Expected ServerHello message iso {:?}", msg));},
-        };
-
-
-        let mut client_result = ClientResult::default();
-        let mut stream_results = vec!();
-        for _streamid in 0 .. self.args.parallel {
-            let stream_result = std::sync::Mutex::new(StreamResult::default());
-            stream_results.push(stream_result);
+    /// Results are retrieved from local threads
+    fn run_download(&mut self) -> Result<ClientResult> {
+        // Collect stream results every second until time is elapsed
+        let total_packets = self.args.get_totalpackets();
+        let duration = Duration::from_secs(self.args.time);
+        let now = Instant::now();
+        loop {
+            std::thread::sleep(Duration::from_secs(1));
+            let elapsed = now.elapsed();
+            if elapsed.as_secs() >= self.args.time {
+                break;
+            }
+            let pktcount_expected = ((total_packets as u128 * elapsed.as_nanos()) / duration.as_nanos()) as u64;
+            let client_result = ClientResult::collect_and_override(&self.stream_results, elapsed, pktcount_expected);
+            if let Some(update_cb) = &mut self.update_cb {
+                update_cb(&client_result);
+            }
         }
 
-        std::thread::scope(|scope| {
-            // start clients threads
-            let mut threads = vec!();
-            let stream_results = &stream_results;
-            for streamid in 0 .. self.args.parallel {
-                let mut stream = Stream::new(self, testid, streamid);
-                let thread = scope.spawn(move || {
-                    stream.run(&stream_results[streamid as usize])
-                });
-                threads.push(thread);
-            }
-
-            // Collect stream results every second until time is elapsed
-            let total_packets = self.args.get_totalpackets();
-            let duration = Duration::from_secs(self.args.time);
-            let now = Instant::now();
-            loop {
-                std::thread::sleep(Duration::from_secs(1));
-                let elapsed = now.elapsed();
-                if elapsed.as_secs() >= self.args.time {
-                    break;
-                }
-                client_result.reset();
-                for streamid in 0 .. self.args.parallel {
-                    let mut stream_result = stream_results[streamid as usize]
-                        .lock().unwrap().clone();
-                    stream_result.elapsed = elapsed;
-                    stream_result.pktcount_expected = ((total_packets as u128 * elapsed.as_nanos()) / duration.as_nanos()) as u64;
-                    client_result.add_stream_result(&stream_result);
-                }
-                if let Some(update_cb) = &mut self.update_cb {
-                    update_cb(&client_result);
-                }
-            }
-        });
+        while let Some(thread) = self.stream_threads.pop() {
+            thread.join().unwrap().unwrap();
+        }
 
         // Build final result
-        client_result.reset();
-        for streamid in 0 .. self.args.parallel {
-            let stream_result = stream_results[streamid as usize]
-                .lock().unwrap().clone();
-            client_result.add_stream_result(&stream_result);
-        }
+        Ok(ClientResult::collect(&self.stream_results))
+    }
 
-        Ok(client_result)
+    /// Results are retrieved from remote server
+    fn run_upload(&mut self) -> Result<ClientResult> {
+        loop {
+            let update = match self.control_stream.recvmsg() {
+                Ok(Message::ServerTestUpdate(update)) => update,
+                Ok(other) => {return Err(eyre!("Expected ServerTestUpdate message iso {:?}", other));}
+                Err(e) => {return Err(eyre!("Failed to communicate with server: {:?}", e));}
+            };
+
+            if let Some(update_cb) = &mut self.update_cb {
+                update_cb(&update);
+            }
+            if update.total.testdone {
+                return Ok(update);
+            }
+        }
+    }
+
+    pub fn run(&mut self) -> Result<ClientResult> {
+        // notify server to start tests
+        self.control_stream.sendmsg(&Message::ClientStartTest)
+            .wrap_err("Failed to send ClientStartTest")?;
+        
+        // Unlock 'run' barrier to start all streams threads
+        self.run_barrier.wait();
+
+        match self.args.revert {
+            true => self.run_download(),
+            false => self.run_upload(),
+        }
     }
 }

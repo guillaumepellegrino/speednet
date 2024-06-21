@@ -1,18 +1,23 @@
 use std::time::Duration;
+use serde::Deserialize;
+use serde::Serialize;
+use std::sync::Mutex;
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]
 pub struct StreamResult {
     pub elapsed: Duration,
     pub pktcount_expected: u64,
     pub pktcount: u64,
     pub bytes: u64,
+    pub testdone: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]
 pub struct ClientResult {
     pub total: StreamResult,
     pub streams: Vec<StreamResult>,
 }
+
 
 impl StreamResult {
     pub fn get_througtput(&self) -> u64 {
@@ -54,6 +59,7 @@ impl ClientResult {
         self.total.pktcount_expected += result.pktcount_expected;
         self.total.pktcount += result.pktcount;
         self.total.bytes += result.bytes;
+        self.total.testdone |= result.testdone;
         self.streams.push(result.clone());
     }
 
@@ -84,5 +90,25 @@ impl ClientResult {
 
     pub fn total(&self) -> &StreamResult {
         &self.total
+    }
+
+    pub fn collect_and_override(streams: &Vec<Mutex<StreamResult>>, elapsed: Duration, pktcount_expected: u64) -> Self {
+        let mut client = ClientResult::default();
+        for stream in streams {
+            let mut stream = stream.lock().unwrap().clone();
+            stream.elapsed = elapsed;
+            stream.pktcount_expected = pktcount_expected as u64;
+            client.add_stream_result(&stream);
+        }
+        client
+    }
+
+    pub fn collect(streams: &Vec<Mutex<StreamResult>>) -> Self {
+        let mut client = ClientResult::default();
+        for stream in streams {
+            let stream = stream.lock().unwrap().clone();
+            client.add_stream_result(&stream);
+        }
+        client
     }
 }

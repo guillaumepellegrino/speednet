@@ -18,25 +18,19 @@ pub fn tcp_send(args: &ArgsClient, mut stream: TcpStream, update: &Mutex<StreamR
     let mut pktcount = 0;
     let mut bytes = 0;
     let now = Instant::now();
+    let mut pktcount_expected = 0;
+    let mut elapsed;
 
     loop {
-        let elapsed = now.elapsed();
-        let pktcount_expected;
-
-        if elapsed.as_secs() >= args.time {
-            pktcount_expected = total_packets;
-            if pktcount >= pktcount_expected {
-                break;
-            }
-            if elapsed.as_secs() >= args.time + 1 {
-                break;
-            }
-        }
-        else {
-            pktcount_expected = ((total_packets as u128 * (elapsed.as_nanos())) / duration.as_nanos()) as u64;
-        }
         if pktcount >= pktcount_expected {
             sleep(Duration::from_millis(2));
+            elapsed = now.elapsed();
+            pktcount_expected = if elapsed.as_secs() >= args.time {
+                total_packets
+            }
+            else {
+                ((total_packets as u128 * (elapsed.as_nanos())) / duration.as_nanos()) as u64
+            };    
             continue;
         }
 
@@ -50,15 +44,31 @@ pub fn tcp_send(args: &ArgsClient, mut stream: TcpStream, update: &Mutex<StreamR
         }
         pktcount += 1;
         bytes += len as u64;
+        elapsed = now.elapsed();
+        pktcount_expected = if elapsed.as_secs() >= args.time {
+            total_packets
+        }
+        else {
+            ((total_packets as u128 * (elapsed.as_nanos())) / duration.as_nanos()) as u64
+        };
 
         let mut update = update.lock().unwrap();
         update.pktcount = pktcount;
+        update.pktcount_expected = pktcount_expected;
         update.bytes = bytes;
-    }
+        update.elapsed = elapsed;
 
-    let mut update = update.lock().unwrap();
-    update.elapsed = now.elapsed();
-    update.pktcount_expected = total_packets;
+        if elapsed.as_secs() >= args.time {
+            if pktcount >= pktcount_expected {
+                update.testdone = true;
+                break;
+            }
+            if elapsed.as_secs() >= args.time + 1 {
+                update.testdone = true;
+                break;
+            }
+        }
+    }
 }
 
 pub fn tcp_recv(args: &ArgsClient, mut stream: TcpStream, update: &Mutex<StreamResult>) {
@@ -69,17 +79,8 @@ pub fn tcp_recv(args: &ArgsClient, mut stream: TcpStream, update: &Mutex<StreamR
     let mut bytes = 0;
     let now = Instant::now();
 
-
     loop {
-        let elapsed = now.elapsed();
-        if elapsed.as_secs() >= args.time {
-            if pktcount >= total_packets {
-                break;
-            }
-            if elapsed.as_secs() >= args.time + 1 {
-                break;
-            }
-        }
+        // TODO: use alarm(1) to protect thread from being stuck in read syscall.
         let len = match stream.read(&mut buffer) {
             Ok(x) => x,
             Err(e) => {
@@ -93,13 +94,22 @@ pub fn tcp_recv(args: &ArgsClient, mut stream: TcpStream, update: &Mutex<StreamR
 
         pktcount += 1;
         bytes += len as u64;
+        let elapsed = now.elapsed();
 
         let mut update = update.lock().unwrap();
         update.pktcount = pktcount;
-        update.bytes = bytes;    
+        update.bytes = bytes;
+        update.elapsed = now.elapsed();
+        update.pktcount_expected = total_packets;
+        if elapsed.as_secs() >= args.time {
+            if pktcount >= total_packets {
+                update.testdone = true;
+                break;
+            }
+            if elapsed.as_secs() >= args.time + 1 {
+                update.testdone = true;
+                break;
+            }
+        }
     }
-
-    let mut update = update.lock().unwrap();
-    update.elapsed = now.elapsed();
-    update.pktcount_expected = total_packets;
 }

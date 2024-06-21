@@ -3,9 +3,11 @@ use eyre::{eyre, Result, WrapErr};
 use serde::Deserialize;
 use serde::Serialize;
 use crate::args::ArgsClient;
+use crate::result;
 use std::net::TcpStream;
 use std::io::{Read, Write};
 use std::net::UdpSocket;
+
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 /// List of Messages used between speednet server and client
@@ -38,12 +40,16 @@ pub enum Message {
 
     /// Server send a test update to the client every second
     /// on the TCP control connection.
-    ServerTestUpdate,
+    ServerTestUpdate(result::ClientResult),
 }
 
 pub trait MessageIO {
     fn sendmsg(&mut self, msg: &Message) -> Result<()>;
     fn recvmsg(&mut self) -> Result<Message>;
+    fn sendrecvmsg(&mut self, msg: &Message) -> Result<Message> {
+        self.sendmsg(msg)?;
+        self.recvmsg()
+    }
 }
 
 impl MessageIO for TcpStream {
