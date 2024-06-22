@@ -14,7 +14,6 @@ pub fn orchestrate(args: ArgsOrchestrate) -> Result<()> {
     }
 
     for (scenario_name, scenario) in &mut scenarios {
-        println!("Run scenario {}", scenario_name);
         scenario.run()?;
     }
 

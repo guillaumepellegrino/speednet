@@ -4,9 +4,13 @@ use eyre::{eyre, Result};
 use std::collections::HashMap;
 use crate::ArgsClient;
 
+pub struct Scenario {
+    name: String,
+    cfg: ScenarioCfg,
+}
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]
-pub struct Scenario {
+pub struct ScenarioCfg {
     #[serde(default)]
     environment: HashMap<String, Environment>,
     client: HashMap<String, ArgsClient>,
@@ -74,17 +78,26 @@ impl Scenario {
     pub fn open_file(path: &str) -> Result<Self> {
         let mut string = std::fs::read_to_string(path)?;
 
-        let scenario: ScenarioEnv = toml::from_str(&string)?;
-        scenario.resolve_environment(&mut string)?;
+        let env: ScenarioEnv = toml::from_str(&string)?;
+        env.resolve_environment(&mut string)?;
         
-        let scenario: Scenario = toml::from_str(&string)?;
-        Ok(scenario)
+        let cfg: ScenarioCfg = toml::from_str(&string)?;
+
+        Ok(Self {
+            name: String::from(path),
+            cfg,
+        })
     }
 
     pub fn run(&mut self) -> Result<()> {
-        for (client_name, client) in &self.client {
-            eprintln!("Start client {}", client_name);
+        eprintln!("[{}] Start scenario", self.name);
+        for (client_name, client) in &self.cfg.client {
+            eprintln!("[{}][{}] Start client", self.name, client_name);
         }
+
+        eprintln!("[{}] Scenario done", self.name);
         Ok(())
     }
+
+
 }
