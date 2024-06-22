@@ -8,12 +8,20 @@ Its design is inspired from iperf3 and it tries to bring the most important feat
 CURRENTLY IN DEVELOPMENT
 
 ## Features
-- Zero-conf server. Everything is configured on client side.
-- Results are all reported on client side.
-- NAT Traversal for UDP and TCP. Download or upload.
-- Low or High througtput measurement (>10Gbps) with fearless Multi-Threading using Rust
-- View (plot) results in real-time using dataviewer.
-- Measure quality of service (througput, packet loss, reordered, jitter)
+- Zero-conf server. Everything is configured on client side. (SUPPORTED)
+- Results are all reported on client side. (SUPPORTED)
+- NAT Traversal for UDP and TCP. Download or upload. (SUPPORTED)
+- Low or High througtput measurement (>10Gbps) with fearless Multi-Threading using Rust (SUPPORTED)
+- View (plot) results in real-time using dataviewer. (TODO)
+- Measure quality of service:
+-- Througput (SUPPORTED)
+-- Packet Loss and reordered (TODO)
+-- Jitter (TODO)
+-- Network Latency (TODO)
+-- Buffer Bloat (Network Latency under load) (TODO)
+- Orchestrate multiple tests (TODO)
+- Propose or define tests scenarios. Scenarios should be configurable (TODO)
+- Validate a test scenario is passing or not (TODO)
 
 ## Installation
 ```

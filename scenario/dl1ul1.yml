@@ -1,0 +1,13 @@
+[environment]
+hostname.description = "The server hostname"
+
+port.description = "The server port"
+port.default = "4000"
+
+[client.httpdownload]
+hostname = "$(server)"
+revert = true
+
+[client.httpupload]
+hostname = "$(server)"
+revert = false

@@ -34,7 +34,8 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     match args.subcommand {
-        Subcommand::Client(client) => speednet_client(client),
-        Subcommand::Server(server) => speednet_server(server),
+        Subcommand::Client(args) => speednet_client(args),
+        Subcommand::Server(args) => speednet_server(args),
+        Subcommand::Orchestrate(args) => speednet_core::orchestrate(args),
     }
 }

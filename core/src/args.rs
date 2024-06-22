@@ -11,46 +11,57 @@ pub struct ArgsClient {
 
     /// speednet server control port
     #[arg(short, long, default_value_t=4000)]
+    #[serde(default)]
     pub port: u16,
 
     /// Use UDP instead of TCP
     #[arg(short, long)]
+    #[serde(default)]
     pub udp: bool,
 
     /// Download instead of Upload
     #[arg(short='R', long)]
+    #[serde(default)]
     pub revert: bool,
 
     /// Set DSCP in packet IP Header
     #[arg(short, long)]
+    #[serde(default)]
     pub dscp: Option<i32>,
 
     /// Set packet MARK
     #[arg(short, long)]
+    #[serde(default)]
     pub mark: Option<i32>,
 
     /// Bind the specified IP Address
     #[arg(short='B', long)]
+    #[serde(default)]
     pub bind: Option<String>,
 
     /// Set a target bandwidth
     #[arg(short, long, default_value_t=0)]
+    #[serde(default)]
     pub bandwidth: u64,
 
     /// Set the number of open connections in parallel
     #[arg(short='P', long, default_value_t=1)]
+    #[serde(default)]
     pub parallel: u32,
 
     /// Set the buffer len to use to send/recv packets
     #[arg(short, long, default_value_t=0)]
+    #[serde(default)]
     pub len: u64,
 
     /// The test duration time
     #[arg(short, long, default_value_t=10)]
+    #[serde(default)]
     pub time: u64,
 
     /// Draw speednet results in dataviewer
     #[arg(short, long)]
+    #[serde(default)]
     pub view: bool,
 }
 
@@ -64,6 +75,12 @@ pub struct ArgsServer {
     pub port: u16,
 }
 
+#[derive(Parser, Debug, Clone, PartialEq, Default)]
+pub struct ArgsOrchestrate {
+    /// List of scenarios (name or file path) to orchestrate
+    pub scenarios: Vec<String>,
+}
+
 #[derive(clap::Subcommand, Debug)]
 pub enum Subcommand {
     /// Run in client mode, connecting to the specified server
@@ -71,6 +88,9 @@ pub enum Subcommand {
 
     /// Run in server mode
     Server(ArgsServer),
+
+    /// Orchestrate one or more tests scenarios
+    Orchestrate(ArgsOrchestrate),
 }
 
 #[derive(Parser, Debug)]
