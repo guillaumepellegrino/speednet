@@ -144,6 +144,7 @@ impl ServerInner {
         else {
             pktgenerator::tcp_recv(&config, stream, &stream_result);
         }
+        println!("DONE: Test id: {}, Stream id: {}", testid, streamid);
         testdone_barrier.wait();
         Ok(())
     }
@@ -162,6 +163,8 @@ impl ServerInner {
         server.next_testid = testid + 1;
         drop(server);
 
+        println!("Client {} accepted", testid);
+
         // Reply with Server Hello
         stream.sendmsg(&Message::ServerHello(testid))
             .wrap_err("Failed to send server hello")?;
@@ -177,6 +180,8 @@ impl ServerInner {
 
         if config.revert {
             // no needs to collect stats in case of download
+            testdone_barrier.wait();
+            println!("Closing Client {} ", testid);
             return Ok(());
         }
 
@@ -203,6 +208,7 @@ impl ServerInner {
         stream.sendmsg(&Message::ServerTestUpdate(client_result))
             .wrap_err("Failed to send server test update")?;
 
+        println!("Closing Client {}: Collect done", testid);
         Ok(())
     }
 }

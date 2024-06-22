@@ -8,6 +8,9 @@ use std::net::TcpStream;
 use std::io::{Read, Write};
 use std::net::UdpSocket;
 
+static SPEEDNET_MAGIC: u32 = 0xFEEDCAFE;
+static SPEEDNET_MSG_MAXSIZE: u32 = 400000;
+
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 /// List of Messages used between speednet server and client
@@ -54,14 +57,22 @@ pub trait MessageIO {
 
 impl MessageIO for TcpStream {
     // Send a speednet control message on a TCP Stream
-    //
-    // The message is stringifyied in JSON and terminated by a NULL character
-    // before being sent on the TCP socket.
+    // 
+    // Message format is:
+    // - [0..4]      Speednet Magic Number
+    // - [4..]       Payload LENGTH
+    // - [8..LENGTH] Payload message stringifyied in JSON
     fn sendmsg(&mut self, msg: &Message) -> Result<()> {
         let string = serde_json::to_string(msg)
             .wrap_err("Failed to stringify message")?;
-        let mut buff = string.into_bytes();
-        buff.push(0);
+        
+        let magic = SPEEDNET_MAGIC.to_ne_bytes();
+        let payload = string.into_bytes();
+        let payload_len = (payload.len() as u32).to_ne_bytes();
+        let mut buff = Vec::with_capacity(magic.len() + payload_len.len() + payload.len());
+        buff.extend(magic);
+        buff.extend(payload_len);
+        buff.extend(payload);
 
         self.write(&buff)
             .wrap_err("Failed to send message")?;
@@ -73,46 +84,33 @@ impl MessageIO for TcpStream {
 
     // Recv a speednet control message from a TCP Stream
     //
-    // The message is received in JSON formated and is delimited by a NULL character.
+    // Message format is the same than in sendmsg().
     fn recvmsg(&mut self) -> Result<Message> {
-        let mut buff = vec!(0; 4096);
-        let mut i = 0;
-        let maxsize = 200000;
-        let eof;
-
-        // Find the message size
-        loop {
-            let chunk = &mut buff[i..];
-            let readlen = self.peek(chunk)
-                .wrap_err("Failed to peek message")?;
-            if readlen == 0 {
-                return Err(eyre!("Connection closed by server"));
-            }
-            //println!("recvmsg() i: {}, readlen: {}", i, readlen);
-            if let Some(nullidx) = chunk.iter().position(|x| *x == 0) {
-                eof = i + nullidx;
-                break;
-            }
-            self.read_exact(&mut buff[i..i+readlen])
-                .wrap_err("Failed to read message")?;
-            i += readlen;
-            if i + 2048 >= buff.len() {
-                buff.resize(buff.len() + 4096, 0);
-                //println!("grow buff to {}", buff.len());
-                if i > maxsize {
-                    return Err(eyre!("Recv message size is too long ({})", i));
-                }
-            } 
+        // read magic number
+        let mut magic = [0; 4];
+        self.read_exact(&mut magic)
+            .wrap_err("Failed to read message magic number")?;
+        let magic = u32::from_ne_bytes(magic);
+        if magic != SPEEDNET_MAGIC {
+            return Err(eyre!("Received message is not a speednet message !"));
+        }
+        
+        // read payload len
+        let mut payload_len = [0; 4];
+        self.read_exact(&mut payload_len)
+            .wrap_err("Failed to read message payload len")?;
+        let payload_len = u32::from_ne_bytes(payload_len);
+        if payload_len > SPEEDNET_MSG_MAXSIZE {
+            return Err(eyre!("Received message payload len is too long: {} bytes", payload_len));
         }
 
-        // Read the last message chunk into buffer
-        self.read_exact(&mut buff[i..eof+1])
-            .wrap_err("Failed to read message")?;
-        
-        //println!("recvmsg() buff[{}..{}]={:?}", 0, eof, &buff[0..eof+1]);
+        // read payload
+        let mut payload = vec!(0; payload_len as usize);
+        self.read_exact(&mut payload)
+            .wrap_err("Failed to read message payload")?;
         
         // Parse the message
-        let string = std::str::from_utf8(&buff[0..eof])
+        let string = std::str::from_utf8(&payload)
             .wrap_err("Received message is not UTF-8")?;
         let msg = serde_json::from_str(string)
             .wrap_err("Failed to parse message")?;

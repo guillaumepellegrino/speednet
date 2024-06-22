@@ -229,9 +229,10 @@ impl<'a> Client<'a> {
         // Unlock 'run' barrier to start all streams threads
         self.run_barrier.wait();
 
-        match self.args.revert {
+        let result = match self.args.revert {
             true => self.run_download(),
             false => self.run_upload(),
-        }
+        };
+        Ok(result.wrap_err("Failed to run test")?)
     }
 }

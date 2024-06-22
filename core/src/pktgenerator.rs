@@ -77,10 +77,14 @@ pub fn tcp_recv(args: &ArgsClient, mut stream: TcpStream, update: &Mutex<StreamR
             Ok(x) => x,
             Err(e) => {
                 println!("Failed to read: {:?}", e);
+                let mut update = update.lock().unwrap();
+                update.testdone = true;    
                 break;
             }
         };
         if len == 0 {
+            let mut update = update.lock().unwrap();
+            update.testdone = true;
             break;
         }
 

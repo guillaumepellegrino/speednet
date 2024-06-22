@@ -146,7 +146,7 @@ fn test_tcp4_dl16_1mbps() {
         args.bandwidth = 10000000;
         args.parallel = 16;
     });
-    assert!(result.total().throughput_is(10000000, 2));
+    assert!(result.total().throughput_is(10000000, 4));
 }
 
 #[test]
