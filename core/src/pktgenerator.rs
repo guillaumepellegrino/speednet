@@ -34,7 +34,7 @@ pub fn tcp_send(args: &ArgsClient, mut stream: TcpStream) {
         }
 
         let len = std::cmp::min(bytes_expected - bytes, bufferlen) as usize;
-        let buffer = &mut buffer[0..len];
+        let buffer = &mut buffer[0..len-1];
         let len = match stream.write(buffer) {
             Ok(x) => x,
             Err(_) => break,

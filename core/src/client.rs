@@ -10,6 +10,7 @@ use crate::{
 };
 
 pub struct Client<'a> {
+    name: String,
     args: ArgsClient, // client configuration passed by command-line arguments
     control_addr: SocketAddr, // socket address used to talk with server
     control_stream: TcpStream, // socket used to talk with server
@@ -85,7 +86,7 @@ impl<'a> Client<'a> {
         args.print_config();
 
         let ip_addr = args.hostname.parse::<IpAddr>()
-            .wrap_err("Invalid hostname")?;
+            .wrap_err_with(|| format!("Invalid IP Address '{}'", args.hostname))?;
 
         let addr = SocketAddr::new(ip_addr, args.port);
         println!("speednet client connect to {:?}", addr);
@@ -102,6 +103,7 @@ impl<'a> Client<'a> {
         }
 
         let mut me = Self {
+            name: String::from("client"),
             args,
             control_addr: addr,
             control_stream: stream,
@@ -146,6 +148,14 @@ impl<'a> Client<'a> {
 
     pub fn args(&self) -> &ArgsClient {
         &self.args
+    }
+
+    pub fn set_name(&mut self, name: &str) {
+        self.name = String::from(name);
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// 1. TCP Upload

@@ -1,13 +1,20 @@
-[environment]
-hostname.description = "The server hostname"
+[var.hostname]
+description = "The server hostname"
 
-port.description = "The server port"
-port.default = "4000"
+[var.bandwidth]
+description = "The maximum bandwidth"
+default = "1G"
+
+[var.port]
+description = "The server port"
+default = "4000"
 
 [client.httpdownload]
-hostname = "$(server)"
+hostname = "$(hostname)"
+bandwidth = "$(bandwidth)"
 revert = true
 
 [client.httpupload]
-hostname = "$(server)"
+hostname = "$(hostname)"
+bandwidth = "$(bandwidth)"
 revert = false

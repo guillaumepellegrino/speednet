@@ -4,6 +4,22 @@ use clap::Parser;
 use serde::Deserialize;
 use serde::Serialize;
 
+pub fn parse_number(string: &str) -> Result<u64, std::num::ParseIntError> {
+    let mut string = string.to_string();
+    string = string.replace("t", "kkkk");
+    string = string.replace("T", "kkkk");
+    string = string.replace("G", "kkk");
+    string = string.replace("m", "kk");
+    string = string.replace("M", "kk");
+    string = string.replace("k", "000");
+    string = string.replace("K", "000");
+    let (string, base) = match string.strip_prefix("0x") {
+        Some(string) => (string, 16),
+        None => (string.as_str(), 10),
+    };
+    u64::from_str_radix(string, base)
+}
+
 #[derive(Parser, Debug, Clone, PartialEq, Default, Deserialize, Serialize)]
 pub struct ArgsClient {
     /// speednet server hostname
@@ -40,7 +56,7 @@ pub struct ArgsClient {
     pub bind: Option<String>,
 
     /// Set a target bandwidth
-    #[arg(short, long, default_value_t=0)]
+    #[arg(short, long, default_value_t=0, value_parser=clap::builder::ValueParser::new(parse_number))]
     #[serde(default)]
     pub bandwidth: u64,
 
@@ -79,6 +95,10 @@ pub struct ArgsServer {
 pub struct ArgsOrchestrate {
     /// List of scenarios (name or file path) to orchestrate
     pub scenarios: Vec<String>,
+
+    /// The test duration time
+    #[arg(short, long, default_value_t=10)]
+    pub time: u64,
 }
 
 #[derive(clap::Subcommand, Debug)]
