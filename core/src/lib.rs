@@ -6,6 +6,7 @@ pub mod pktgenerator;
 pub mod result;
 pub mod scenario;
 pub mod orchestrate;
+mod bpf;
 
 pub use args::{Args, ArgsClient, ArgsServer, ArgsOrchestrate, Subcommand};
 pub use client::Client;

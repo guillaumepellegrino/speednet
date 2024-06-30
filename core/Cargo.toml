@@ -11,6 +11,8 @@ authors = ["Guillaume Pellegrino <guillaume.pellegrino@yahoo.com>"]
 keywords = ["network", "linux", "speedtest"]
 categories = ["network-programming"]
 
+[build-dependencies]
+cc = "1.0"
 
 [dependencies]
 serde = { version = "1.0.158", features = ["derive"] }

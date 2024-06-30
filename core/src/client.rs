@@ -93,9 +93,12 @@ impl<'a> Client<'a> {
 
         let stream = TcpStream::connect(addr)
             .wrap_err("Failed to connect to server")?;
+        stream.set_read_timeout(Some(Duration::from_millis(5000)))
+            .wrap_err("Failed to set socket read timeout")?;
+        stream.set_write_timeout(Some(Duration::from_millis(5000)))
+            .wrap_err("Failed to set socket write timeout")?;
 
         let run_barrier = Arc::new(Barrier::new(args.parallel as usize + 1));
-        
         let mut stream_results = vec!();
         for _streamid in 0 .. args.parallel {
             let stream_result = std::sync::Mutex::new(StreamResult::default());

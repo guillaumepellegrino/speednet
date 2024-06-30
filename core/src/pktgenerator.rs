@@ -20,6 +20,11 @@ pub fn tcp_send(args: &ArgsClient, mut stream: TcpStream) {
     let mut bytes_expected = 0;
     let mut elapsed;
 
+    if let Err(e) = stream.set_write_timeout(Some(Duration::from_millis(1000))) {
+        println!("Failed to set write timeout: {:?}", e);
+        return;
+    }
+
     loop {
         if bytes >= bytes_expected {
             sleep(Duration::from_millis(2));
@@ -73,6 +78,11 @@ pub fn tcp_recv(args: &ArgsClient, mut stream: TcpStream, update: &Mutex<StreamR
     let mut pktcount = 0;
     let mut bytes = 0;
     let now = Instant::now();
+
+    if let Err(e) = stream.set_read_timeout(Some(Duration::from_millis(1000))) {
+        println!("Failed to set read timeout: {:?}", e);
+        return;
+    }
 
     loop {
         // TODO: use alarm(1) to protect thread from being stuck in read syscall.

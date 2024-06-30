@@ -1,5 +1,5 @@
 use eyre::{eyre, Result, WrapErr};
-use std::net::{TcpListener, TcpStream, SocketAddr, IpAddr, Ipv6Addr};
+use std::net::{TcpListener, TcpStream, UdpSocket, SocketAddr, IpAddr, Ipv6Addr};
 use std::sync::{
     Arc,
     Barrier,
@@ -17,6 +17,7 @@ use crate::{
 
 pub struct Server {
     listener: TcpListener,
+    udp: Option<UdpSocket>,
     local_addr: SocketAddr,
     inner: ServerInner,
 }
@@ -64,10 +65,15 @@ impl Server {
         let listen_addr = SocketAddr::new(ip_addr, args.port);
         let listener = TcpListener::bind(listen_addr)?;
         let local_addr = listener.local_addr()?;
+
+        // create UDP socket a BPF filter to receive only new connections
+        let udp = UdpSocket::bind(listen_addr)?;
+        crate::bpf::socket_attach_filter(&udp);
         println!("speednet server listening on {:?}", local_addr);
 
         Ok(Self {
             listener,
+            udp: Some(udp),
             local_addr,
             inner: ServerInner::new()?
         })
@@ -78,6 +84,14 @@ impl Server {
     /// The speednet server is waiting for new speednet client tcp control connections.
     /// Multiple speednet clients can connect at the same time.
     pub fn run(&mut self) -> Result<()> {
+        let me = self.inner.clone();
+        let udp = self.udp.take().unwrap();
+        std::thread::spawn(move || {
+            if let Err(e) = me.server_handle_new_udp_client(udp) {
+                println!("Client error: {:?}", e);
+            }
+        });
+
         for stream in self.listener.incoming() {
             let me = self.inner.clone();
             let stream = match stream {
@@ -88,7 +102,7 @@ impl Server {
                 }
             };
             std::thread::spawn(move || {
-                if let Err(e) = me.server_handle_new_client(stream) {
+                if let Err(e) = me.server_handle_new_tcp_client(stream) {
                     println!("Client error: {:?}", e);
                 }
             });
@@ -115,7 +129,23 @@ impl ServerInner {
         })
     }
 
-    fn server_handle_new_client(&self, mut stream: TcpStream) -> Result<()> {
+    fn server_handle_new_udp_client(&self, udp: UdpSocket) -> Result<()> {
+        loop {
+            let mut msg = [0; 32];
+            udp.recv(&mut msg)
+                .wrap_err("Failed to read message")?;
+            println!("msg={:?}", msg);
+        }
+
+        //Ok(())
+    }
+
+    fn server_handle_new_tcp_client(&self, mut stream: TcpStream) -> Result<()> {
+        stream.set_read_timeout(Some(Duration::from_millis(5000)))
+            .wrap_err("Failed to set socket read timeout")?;
+        stream.set_write_timeout(Some(Duration::from_millis(5000)))
+            .wrap_err("Failed to set socket write timeout")?;
+
         let msg = stream.recvmsg()
             .wrap_err("Failed to read client hello message")?;
 
