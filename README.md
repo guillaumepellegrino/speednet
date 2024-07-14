@@ -1,5 +1,5 @@
 
-# speednet: A TCP and UDP network speed measurement tool
+# speednet: A TCP and UDP network speed measurement tool for Linux.
 
 ## Summary
 speednet is a speedtest tool written in Rust.

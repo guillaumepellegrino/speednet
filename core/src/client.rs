@@ -1,5 +1,5 @@
 use eyre::{eyre, Result, WrapErr};
-use std::net::{TcpStream, UdpSocket, SocketAddr, IpAddr};
+use std::net::{TcpStream, SocketAddr, IpAddr};
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::{Duration, Instant};
 use crate::{
@@ -39,7 +39,7 @@ impl Stream {
 
     fn run(&mut self, result: &Mutex<StreamResult>) -> Result<()> {
         if self.args.udp {
-            self.run_udp()?;
+            self.run_udp(result)?;
         }
         else {
             self.run_tcp(result)?;
@@ -47,19 +47,31 @@ impl Stream {
         Ok(())
     }
 
-    fn run_udp(&mut self) -> Result<StreamResult> {
+    fn run_udp(&mut self, result: &Mutex<StreamResult>) -> Result<()> {
         let bindaddr = match self.control_addr.is_ipv4() {
             true  => "0.0.0.0:0",
             false => "[::0]:0",
         };
-        let mut s = UdpSocket::bind(bindaddr)
+        let mut udp = crate::socket::udp::bind(bindaddr.parse().unwrap())
             .wrap_err("Failed to bind addr")?;
+        udp.connect(self.control_addr)
+            .wrap_err("Failed to connect to addr")?;
 
         let start_udp = Message::ClientStreamHello(self.testid, self.streamid);
-        s.sendmsg(&start_udp)
+        println!("Start UDP: {:?}", start_udp);
+        udp.sendmsg(&start_udp)
             .wrap_err("Client failed to start UDP")?;
 
-        unreachable!();
+        println!("Start UDP SENT: {:?}", start_udp);
+
+        if self.args.revert {
+            pktgenerator::udp_recv(&self.args, udp, result);
+        }
+        else {
+            pktgenerator::udp_send(&self.args, udp);
+        }
+
+        Ok(())
     }
 
     fn run_tcp(&mut self, result: &Mutex<StreamResult>) -> Result<()> {
@@ -187,8 +199,6 @@ impl<'a> Client<'a> {
     /// - [data] Client open Nx data UDP streams
     /// - [data] Server send on data UDP stream
     ///
-    
-
     /// Results are retrieved from local threads
     fn run_download(&mut self) -> Result<ClientResult> {
         // Collect stream results every second until time is elapsed

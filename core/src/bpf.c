@@ -5,6 +5,7 @@
 #include <linux/bpf.h>
 #include <linux/filter.h>
 #include <sys/socket.h>
+#include <arpa/inet.h>
 
 #define SPEEDNET_MAGIC 0xFEEDCAFE
 
@@ -20,7 +21,7 @@ bool socket_attach_bpf_filter(int socket) {
     /* check than first packet word (4 bytes) starts with SPEEDNET_MAGIC */
     struct sock_filter sock_filter[] = {
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 8),                      /* LOAD First WORD after UDP Header */
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SPEEDNET_MAGIC, 0, 1),  /* SPEEDNET_MAGIC ? */
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, htonl(SPEEDNET_MAGIC), 0, 1),  /* SPEEDNET_MAGIC ? */
         BPF_STMT(BPF_RET | BPF_K, 0x0fffffff),                      /* pass */
         BPF_STMT(BPF_RET | BPF_K, 0),                               /* reject */
     };
@@ -35,3 +36,4 @@ bool socket_attach_bpf_filter(int socket) {
 
     return true;
 }
+

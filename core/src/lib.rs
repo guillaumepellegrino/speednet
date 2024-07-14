@@ -7,6 +7,7 @@ pub mod result;
 pub mod scenario;
 pub mod orchestrate;
 mod bpf;
+mod socket;
 
 pub use args::{Args, ArgsClient, ArgsServer, ArgsOrchestrate, Subcommand};
 pub use client::Client;

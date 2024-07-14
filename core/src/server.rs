@@ -67,8 +67,10 @@ impl Server {
         let local_addr = listener.local_addr()?;
 
         // create UDP socket a BPF filter to receive only new connections
-        let udp = UdpSocket::bind(listen_addr)?;
+        let udp = crate::socket::udp::bind(listen_addr)
+            .wrap_err("Failed to bind UDP socket")?;
         crate::bpf::socket_attach_filter(&udp);
+
         println!("speednet server listening on {:?}", local_addr);
 
         Ok(Self {
@@ -85,10 +87,12 @@ impl Server {
     /// Multiple speednet clients can connect at the same time.
     pub fn run(&mut self) -> Result<()> {
         let me = self.inner.clone();
-        let udp = self.udp.take().unwrap();
+        let mut udp = self.udp.take().unwrap();
         std::thread::spawn(move || {
-            if let Err(e) = me.server_handle_new_udp_client(udp) {
-                println!("Client error: {:?}", e);
+            loop {
+                if let Err(e) = me.server_handle_new_udp_client(&mut udp) {
+                    println!("Client error: {:?}", e);
+                }
             }
         });
 
@@ -129,15 +133,68 @@ impl ServerInner {
         })
     }
 
-    fn server_handle_new_udp_client(&self, udp: UdpSocket) -> Result<()> {
-        loop {
-            let mut msg = [0; 32];
-            udp.recv(&mut msg)
-                .wrap_err("Failed to read message")?;
-            println!("msg={:?}", msg);
+    fn server_handle_new_udp_client(&self, udp_ctl: &mut UdpSocket) -> Result<()> {
+        // Read the whole message
+        let mut buff = vec!(0; 4096);
+        let (readlen, from) = udp_ctl.recv_from(&mut buff)
+            .wrap_err("Failed to read message")?;
+        if readlen == 0 {
+            return Err(eyre!("Connection closed by server"));
+        }
+        let msg = Message::deserialize(&buff[0..readlen])
+            .wrap_err("Failed to desezialize message")?;
+        let (testid, streamid) = match msg {
+            Message::ClientStreamHello(testid, streamid) => (testid, streamid),
+            other => {return Err(eyre!("Unexpected msg {:?}", other));},
+        };
+
+        // TODO: We should implement a reply and retry mechanism, here,
+        //       in order to handle packet loss.
+
+        let local = udp_ctl.local_addr()
+            .wrap_err("Failed to retrieve UDP local addr")?;
+        eprintln!("local={:?}", local);
+        eprintln!("from={:?}", from);
+        let udp_stream = crate::socket::udp::bind(local)
+            .wrap_err("Failed to bind UDP Stream")?;
+        udp_stream.connect(from)
+            .wrap_err("Failed to connect UDP stream")?;
+
+        let me = self.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = me.server_handle_udp_client_stream(udp_stream, testid, streamid) {
+                eprintln!("UDP Client Stream error: {:?}", e);
+            }
+        });
+
+        Ok(())
+    }
+
+    fn server_handle_udp_client_stream(&self, udp: UdpSocket, testid: u32, streamid: u32) -> Result<()> {
+        println!("Starting Test id: {}, UDP Stream id: {}", testid, streamid);
+
+        let mut server = self.shared.write().unwrap();
+        let client = server.clients.get_mut(&testid)
+            .ok_or_else(|| eyre!("Unknown testid {}", testid))?;
+        let config = client.config.clone();
+        let stream_results = client.stream_results.clone();
+        let testdone_barrier = client.testdone_barrier.clone();
+        drop(server);
+
+        let stream_result = stream_results.get(streamid as usize).expect("Unknown streamid");
+
+        // FIXME: we must use a semaphore or barrier, here.
+
+        if config.revert {
+            pktgenerator::udp_send(&config, udp);
+        }
+        else {
+            pktgenerator::udp_recv(&config, udp, &stream_result);
         }
 
-        //Ok(())
+        println!("DONE: Test id: {}, Stream UDP id: {}", testid, streamid);
+        testdone_barrier.wait();
+        Ok(())
     }
 
     fn server_handle_new_tcp_client(&self, mut stream: TcpStream) -> Result<()> {
@@ -157,7 +214,7 @@ impl ServerInner {
     }
 
     fn server_handle_client_start_stream(&self, stream: TcpStream, testid: u32, streamid: u32) -> Result<()> {
-        println!("Starting Test id: {}, Stream id: {}", testid, streamid);
+        println!("Starting Test id: {}, TCP Stream id: {}", testid, streamid);
 
         let mut server = self.shared.write().unwrap();
         let client = server.clients.get_mut(&testid)
@@ -166,15 +223,17 @@ impl ServerInner {
         let stream_results = client.stream_results.clone();
         let testdone_barrier = client.testdone_barrier.clone();
         drop(server);
-
         let stream_result = stream_results.get(streamid as usize).expect("Unknown streamid");
+
+        // FIXME: we must use a semaphore or barrier, here.
+
         if config.revert {
             pktgenerator::tcp_send(&config, stream);
         }
         else {
             pktgenerator::tcp_recv(&config, stream, &stream_result);
         }
-        println!("DONE: Test id: {}, Stream id: {}", testid, streamid);
+        println!("DONE: Test id: {}, Stream TCP id: {}", testid, streamid);
         testdone_barrier.wait();
         Ok(())
     }
